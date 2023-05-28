@@ -1,0 +1,129 @@
+-- joins, ctes, temp tables, windows function, aggregate function, creating views, converting data types
+
+SELECT *
+FROM `onyx-smoke-380601.portfolio_1.CovidDeaths` 
+where continent is not null
+order by 3,4
+LIMIT 100
+
+-- Select Data that we are going to be starting with
+select location, date, total_cases, new_cases, total_deaths, population
+FROM `onyx-smoke-380601.portfolio_1.CovidDeaths` 
+where continent is not null
+order by 1,2
+
+-- Total Cases vs Total Deaths
+-- Shows likelihood of dying if you contract covid in your country
+select location, date, total_cases, total_deaths, (total_deaths/total_cases)*100 as DeathPercentage
+FROM `onyx-smoke-380601.portfolio_1.CovidDeaths` 
+where location like '%States%' and continent is not null 
+order by 1,2 
+
+-- Total Cases vs Total Deaths
+-- shows what percentage of population is infected with covid
+select location, date, total_cases, total_deaths, (total_deaths/total_cases)*100 as DeathPercentage
+FROM `onyx-smoke-380601.portfolio_1.CovidDeaths` 
+where continent is not null 
+order by 1,2 
+
+-- Countries with highest infection rate compared to population 
+select location, population, Max(total_cases) as HighestInfectionCount, Max((total_cases/population))*100 as PercentPopulationInfected
+FROM `onyx-smoke-380601.portfolio_1.CovidDeaths` 
+group by location, population
+order by PercentPopulationInfected Desc
+
+-- Countries with highest death count per population 
+select location, Max(cast(total_deaths as int64)) as TotalDeathCount 
+FROM `onyx-smoke-380601.portfolio_1.CovidDeaths` 
+where continent is not null
+group by location 
+order by TotalDeathCount desc
+-- 꼭 group by로 지정
+
+-- Breaking down by continent
+-- showing continent with the highest death count per population 
+select continent, Max(cast(total_deaths as int64)) as TotalDeathCount
+FROM `onyx-smoke-380601.portfolio_1.CovidDeaths` 
+where continent is not null
+group by continent
+order by TotalDeathCount desc
+
+-- Global Numbers 
+select sum(new_cases) as totalCases, sum(cast(new_deaths as int64)) as total_deaths, sum(cast(new_deaths as int64))/sum(new_cases)*100 as DeathPercentage 
+FROM `onyx-smoke-380601.portfolio_1.CovidDeaths` 
+where continent is not null
+order by 1,2
+
+-- Total population vs Vaccinnations 
+-- shows percentages of population that has received at least one covid vaccine
+select dea.continent, dea.location, dea.date, dea.population, vac.new_vaccinations
+from `onyx-smoke-380601.portfolio_1.CovidDeaths` dea
+  join `onyx-smoke-380601.portfolio_1.CovidVaccinations` vac on dea.location = vac.location and dea.date=vac.date
+where continent is not null
+order by 2,3
+
+-- using cte to perform calculation on partition by in previous query 
+With PopvsVac as (continent, location, date, population, New_vaccination, RollingPeopleVaccinated)
+as 
+(
+  select dea.continent, dea.location, dea.date, dea.population,vac.new_vaccinations, sum(cast(vac.new_vaccinations as int64)) over (partition by dea.location order by dea.location, dea.date) as RollingPeopleVaccinated
+)
+from `onyx-smoke-380601.portfolio_1.CovidDeaths` dea
+  join `onyx-smoke-380601.portfolio_1.CovidVaccinations` vac on dea.location = vac.location and dea.date=vac.date
+where continent is not null
+select *, (RollingPeopleVaccinated/Population)*100
+from PopvsVac
+
+-- 테이블을 만들 쿼리문 with 테이블 이름 as 
+With PopvsVac as 
+-- (Continent, Location, Date, Population, New_Vaccinations, RollingPeopleVaccinated)
+(
+Select dea.continent, dea.location, dea.date, dea.population, vac.new_vaccinations
+, SUM(cast(vac.new_vaccinations as int64)) OVER (Partition by dea.Location Order by dea.location, dea.Date) as RollingPeopleVaccinated
+from `onyx-smoke-380601.portfolio_1.CovidDeaths` dea
+  Join `onyx-smoke-380601.portfolio_1.CovidVaccinations` vac
+	On dea.location = vac.location
+	and dea.date = vac.date
+where dea.continent is not null 
+)
+Select *, (RollingPeopleVaccinated/Population)*100
+From PopvsVac
+
+
+-- Using temp table to perform calculations on partition by in previous query
+-- drop table if exists PercentPopulationVaccinated
+create temp table PercentPopulationVaccinated
+-- `onyx-smoke-380601.portfolio_1.PercentPopulationVaccinated`
+(
+  Continent string,
+  Location string,
+  Date datetime,
+  Population float64,
+  new_vaccinations float64,
+  RollingPeopleVaccinated numeric
+);
+
+Insert into PercentPopulationVaccinated
+Select dea.continent, dea.location, dea.date, dea.population, vac.new_vaccinations
+, SUM(cast(vac.new_vaccinations as int64)) OVER (Partition by dea.Location Order by dea.location, dea.Date) as RollingPeopleVaccinated
+from `onyx-smoke-380601.portfolio_1.CovidDeaths` dea
+  Join `onyx-smoke-380601.portfolio_1.CovidVaccinations` vac
+	On dea.location = vac.location
+	and dea.date = vac.date
+where dea.continent is not null
+order by 2,3;
+
+Select *, (RollingPeopleVaccinated/Population)*100
+from PercentPopulationVaccinated;
+
+-- creating view to store data for later visualizations
+create view PercentPopulationVaccinated as 
+Select dea.continent, dea.location, dea.date, dea.population, vac.new_vaccinations
+, SUM(cast(vac.new_vaccinations as int64)) OVER (Partition by dea.Location Order by dea.location, dea.Date) as RollingPeopleVaccinated
+from `onyx-smoke-380601.portfolio_1.CovidDeaths` dea
+  Join `onyx-smoke-380601.portfolio_1.CovidVaccinations` vac
+	On dea.location = vac.location
+	and dea.date = vac.date
+where dea.continent is not null
+
+
